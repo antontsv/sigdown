@@ -10,7 +10,7 @@ import (
 func newDownloader(key string, t *testing.T) *Downloader {
 	downloader, err := New(testKey)
 	if err != nil {
-		t.Fatalf("unexpected error creating downloader: %v", err)
+		t.Fatalf("unexpected error while creating downloader: %v", err)
 		return nil
 	}
 	return downloader

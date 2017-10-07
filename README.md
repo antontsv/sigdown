@@ -23,7 +23,7 @@ func main() {
     // https://github.com/antontsv/sigdown/blob/master/example_test.go#L33
 	downloader, err := sigdown.New(testKey) 
 	if err != nil {
-		log.Fatalf("unexpected error creating downloader: %v", err)
+		log.Fatalf("unexpected error while creating downloader: %v", err)
 	}
 
 	download, err := downloader.Download(context.Background(), url, sigurl)
@@ -35,3 +35,7 @@ func main() {
 }
 
 ```
+
+More
+====
+[![GoDoc](https://godoc.org/github.com/antontsv/sigdown?status.svg)](https://godoc.org/github.com/antontsv/sigdown)
