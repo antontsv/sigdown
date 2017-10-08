@@ -63,8 +63,8 @@ func (d *Downloader) Download(ctx context.Context, url string, sigurl string) (*
 	defer cancel()
 	timeout := time.After(d.MaxTime)
 
-	results := make(chan result)
-	downloadc := make(chan download)
+	results := make(chan result, 5)
+	downloadc := make(chan download, 2)
 
 	downloader := func(name string, url string) {
 		req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -96,8 +96,7 @@ func (d *Downloader) Download(ctx context.Context, url string, sigurl string) (*
 			return nil, fmt.Errorf("operation was canceled")
 		case dl := <-downloadc:
 			downloads[dl.resType] = dl.resp.Body
-			if len(downloads) >= 2 {
-				downloadc = nil
+			if len(downloads) == 2 {
 				go d.readContent(cancelCtx, downloads, results)
 			}
 		case result := <-results:
