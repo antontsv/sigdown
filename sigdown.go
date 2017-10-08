@@ -2,7 +2,6 @@
 package sigdown
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -33,6 +32,17 @@ type download struct {
 	err     error
 }
 
+type result struct {
+	content *SignedContent
+	err     error
+}
+
+// Download resource types
+const (
+	resContent = "content"
+	resSig     = "signature"
+)
+
 // New returns new downloader set to verify downloads provided PGP key
 func New(pgpPubKey string) (*Downloader, error) {
 	d := new(Downloader)
@@ -53,75 +63,109 @@ func (d *Downloader) Download(ctx context.Context, url string, sigurl string) (*
 	defer cancel()
 	timeout := time.After(d.MaxTime)
 
+	results := make(chan result)
 	downloadc := make(chan download)
+
 	downloader := func(name string, url string) {
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		req = req.WithContext(cancelCtx)
 		resp, err := http.DefaultClient.Do(req)
+		if cancelCtx.Err() != nil {
+			return
+		}
 		if err != nil || resp.StatusCode != http.StatusOK {
 			if err == nil {
 				err = fmt.Errorf("unexpected HTTP response code %d", resp.StatusCode)
 			}
-			downloadc <- download{err: fmt.Errorf("Could not download %s from %s: %v", name, url, err)}
+			results <- result{err: fmt.Errorf("Could not download %s from %s: %v", name, url, err)}
 			return
 		}
 		downloadc <- download{resType: name, resp: resp}
 	}
 
-	const (
-		resContent = "content"
-		resSig     = "signature"
-	)
-
 	go downloader(resContent, url)
 	go downloader(resSig, sigurl)
 
-	downloads := make(map[string]*http.Response)
+	downloads := make(map[string]io.ReadCloser)
 
-	for i := 0; i < 2; i++ {
+	for {
 		select {
 		case <-timeout:
 			return nil, fmt.Errorf("was not able to download required content in allowed time")
 		case <-cancelCtx.Done():
 			return nil, fmt.Errorf("operation was canceled")
-		case d := <-downloadc:
-			if d.err != nil {
-				return nil, d.err
+		case dl := <-downloadc:
+			downloads[dl.resType] = dl.resp.Body
+			if len(downloads) >= 2 {
+				downloadc = nil
+				go d.readContent(cancelCtx, downloads, results)
 			}
-			downloads[d.resType] = d.resp
+		case result := <-results:
+			return result.content, result.err
 		}
 	}
 
-	defer downloads[resContent].Body.Close()
-	defer downloads[resSig].Body.Close()
+}
 
-	var buf, sigbuf bytes.Buffer
+type contextReader struct {
+	R   io.Reader
+	ctx context.Context
+	N   int
+}
+
+func (cr *contextReader) Read(p []byte) (n int, err error) {
+	if cr.ctx.Err() != nil {
+		return 0, io.EOF
+	}
+	n, err = cr.R.Read(p)
+	cr.N += n
+	return
+}
+
+func (d *Downloader) readContent(ctx context.Context, downloads map[string]io.ReadCloser, results chan result) {
+
+	defer downloads[resContent].Close()
+	defer downloads[resSig].Close()
+
 	maxbytes := d.MaxBytes
-	tee := io.TeeReader(io.LimitReader(downloads[resContent].Body, int64(maxbytes)), &buf)
-	sigtee := io.TeeReader(io.LimitReader(downloads[resSig].Body, int64(maxbytes)), &sigbuf)
-
-	entity, err := openpgp.CheckArmoredDetachedSignature(d.keyring, tee, sigtee)
-	if err != nil {
-		if buf.Len() >= maxbytes || sigbuf.Len() >= maxbytes {
-			return nil, fmt.Errorf("reached max bytes allowed to download: %d", maxbytes)
-		}
-		return nil, fmt.Errorf("file and signature mismatch: %v", err)
-	}
-	sigbuf.Reset()
-
+	pr, pw := io.Pipe()
 	names := make([]string, 0, 1)
 
+	go func() {
+		b, err := ioutil.ReadAll(pr)
+		if err != nil {
+			results <- result{err: fmt.Errorf("unable to read signed content: %v", err)}
+			return
+		}
+		results <- result{content: &SignedContent{Content: string(b), Signers: names}}
+	}()
+
+	cr := &contextReader{
+		R:   io.TeeReader(io.LimitReader(downloads[resContent], int64(maxbytes)), pw),
+		ctx: ctx,
+	}
+	sr := &contextReader{
+		R:   io.LimitReader(downloads[resSig], int64(maxbytes)),
+		ctx: ctx,
+	}
+
+	entity, err := openpgp.CheckArmoredDetachedSignature(d.keyring, cr, sr)
+
+	if err != nil {
+		if cr.N >= maxbytes || sr.N >= maxbytes {
+			err = fmt.Errorf("reached max bytes allowed to download: %d", maxbytes)
+		} else {
+			err = fmt.Errorf("file and signature mismatch: %v", err)
+		}
+		results <- result{err: err}
+		pw.CloseWithError(err)
+		return
+	}
 	for _, v := range entity.Identities {
 		if v.UserId != nil {
 			names = append(names, v.UserId.Name)
 		}
 	}
-
-	b, err := ioutil.ReadAll(&buf)
-	if err != nil {
-		return nil, fmt.Errorf("unable ro read signed content: %v", err)
-	}
-
-	return &SignedContent{Content: string(b), Signers: names}, nil
+	pw.Close()
 
 }

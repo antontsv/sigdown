@@ -8,7 +8,7 @@ import (
 )
 
 func newDownloader(key string, t *testing.T) *Downloader {
-	downloader, err := New(testKey)
+	downloader, err := New(key)
 	if err != nil {
 		t.Fatalf("unexpected error while creating downloader: %v", err)
 		return nil
@@ -102,11 +102,27 @@ func TestSupportAbort(t *testing.T) {
 
 	downloader := newDownloader(testKey, t)
 	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(5*time.Millisecond, cancel)
-	_, err := downloader.Download(ctx, url, sigurl)
-	if err == nil || err.Error() != "operation was canceled" {
-		t.Errorf("Expected failure to user abort using context: %v", err)
+	defer cancel()
+	interval := 5 * time.Millisecond
+	timec := time.After(interval)
+	errc := make(chan error)
+	go func() {
+		_, err := downloader.Download(ctx, url, sigurl)
+		errc <- err
+	}()
+loop:
+	for {
+		select {
+		case <-timec:
+			cancel()
+		case err := <-errc:
+			if err == nil || err.Error() != "operation was canceled" {
+				t.Errorf("Expected failure to user abort using context: %v", err)
+			}
+			break loop
+		}
 	}
+
 }
 
 func TestSignedWithDifferentKey(t *testing.T) {
