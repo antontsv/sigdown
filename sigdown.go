@@ -58,10 +58,8 @@ func New(pgpPubKey string) (*Downloader, error) {
 
 // Download fetches data and PGP signature over HTTP and returns data if signed correctly
 func (d *Downloader) Download(ctx context.Context, url string, sigurl string) (*SignedContent, error) {
-
-	cancelCtx, cancel := context.WithCancel(ctx)
+	cancelCtx, cancel := context.WithTimeout(ctx, d.MaxTime)
 	defer cancel()
-	timeout := time.After(d.MaxTime)
 
 	results := make(chan result, 5)
 	downloadc := make(chan download, 2)
@@ -90,9 +88,10 @@ func (d *Downloader) Download(ctx context.Context, url string, sigurl string) (*
 
 	for {
 		select {
-		case <-timeout:
-			return nil, fmt.Errorf("was not able to download required content in allowed time")
 		case <-cancelCtx.Done():
+			if cancelCtx.Err() == context.DeadlineExceeded {
+				return nil, fmt.Errorf("was not able to download required content in allowed time")
+			}
 			return nil, fmt.Errorf("operation was canceled")
 		case dl := <-downloadc:
 			downloads[dl.resType] = dl.resp.Body
