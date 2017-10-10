@@ -48,7 +48,7 @@ func TestDownloaderErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			downloader := newDownloader(testKey, t)
 			downloader.MaxBytes = tc.mbytes
-			downloader.MaxTime = tc.mtime
+			downloader.Timeout = tc.mtime
 			_, err := downloader.Download(context.Background(), url, sigurl)
 			if err == nil || !strings.Contains(err.Error(), tc.err) {
 				t.Errorf("excepted error: %s, but got: %v", tc.err, err)

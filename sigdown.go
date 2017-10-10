@@ -15,15 +15,28 @@ import (
 
 // SignedContent returns signed context and names of signers
 type SignedContent struct {
+	// Content that has been confirmed by its detashed signature
 	Content string
+	// Signers represents a list of names of people who signed Content.
 	Signers []string
 }
 
 // Downloader can perform an HTTP download with PGP signature verification
 type Downloader struct {
-	keyring  openpgp.EntityList
+	keyring openpgp.EntityList
+	// MaxBytes spefifies max number of bytes content or signature file
+	// can be downloaded from remote site.
+	// We do not want remote service or Man-In-The-Middle try to overload
+	// Downloader with large files, by having download size limited to appropriate
+	// value we will fail fast
+	//
+	// Default is 1048576 [1MB]
 	MaxBytes int
-	MaxTime  time.Duration
+	// Timeout specifies a time limit a Download is allowed to run,
+	// including getting content and signature data from remote server
+	// and running all checks.
+	// Default is 30 seconds
+	Timeout time.Duration
 }
 
 type download struct {
@@ -52,13 +65,13 @@ func New(pgpPubKey string) (*Downloader, error) {
 	}
 	d.keyring = keyring
 	d.MaxBytes = 1048576 // 1 MB
-	d.MaxTime = 30 * time.Second
+	d.Timeout = 30 * time.Second
 	return d, nil
 }
 
 // Download fetches data and PGP signature over HTTP and returns data if signed correctly
 func (d *Downloader) Download(ctx context.Context, url string, sigurl string) (*SignedContent, error) {
-	cancelCtx, cancel := context.WithTimeout(ctx, d.MaxTime)
+	cancelCtx, cancel := context.WithTimeout(ctx, d.Timeout)
 	defer cancel()
 
 	results := make(chan result, 5)
