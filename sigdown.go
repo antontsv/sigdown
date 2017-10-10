@@ -80,6 +80,7 @@ func (d *Downloader) Download(ctx context.Context, url string, sigurl string) (*
 	downloader := func(name string, url string) {
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		req = req.WithContext(cancelCtx)
+		req.Close = true
 		resp, err := http.DefaultClient.Do(req)
 		if cancelCtx.Err() != nil {
 			return
