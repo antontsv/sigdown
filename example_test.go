@@ -19,7 +19,7 @@ func Example() {
 		log.Fatalf("unexpected error creating downloader: %v", err)
 	}
 
-	download, err := downloader.Download(context.Background(), url, sigurl)
+	download, err := downloader.Download(context.Background(), sigdown.Request{URL: url, SigURL: sigurl})
 	if err != nil {
 		log.Fatalf("failed to download %s with signature verification, error: %v", url, err)
 	}

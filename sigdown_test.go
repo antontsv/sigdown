@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func newDownloader(key string, t *testing.T) *Downloader {
+func newDownloader(key string, t *testing.T) Downloader {
 	downloader, err := New(key)
 	if err != nil {
 		t.Fatalf("unexpected error while creating downloader: %v", err)
@@ -47,9 +47,13 @@ func TestDownloaderErrors(t *testing.T) {
 	for _, tc := range tt {
 		t.Run(tc.name, func(t *testing.T) {
 			downloader := newDownloader(testKey, t)
-			downloader.MaxBytes = tc.mbytes
-			downloader.Timeout = tc.mtime
-			_, err := downloader.Download(context.Background(), url, sigurl)
+			req := Request{
+				URL:      url,
+				SigURL:   sigurl,
+				MaxBytes: tc.mbytes,
+				Timeout:  tc.mtime,
+			}
+			_, err := downloader.Download(context.Background(), req)
 			if err == nil || !strings.Contains(err.Error(), tc.err) {
 				t.Errorf("excepted error: %s, but got: %v", tc.err, err)
 			}
@@ -89,7 +93,7 @@ func TestURLWithoutSig(t *testing.T) {
 	sigurl := url + ".asc"
 
 	downloader := newDownloader(testKey, t)
-	_, err := downloader.Download(context.Background(), url, sigurl)
+	_, err := downloader.Download(context.Background(), Request{URL: url, SigURL: sigurl})
 	if err == nil || !strings.HasPrefix(err.Error(), "Could not download signature") ||
 		!strings.Contains(err.Error(), "unexpected HTTP response code") {
 		t.Error("Expected failure to download non-existing signature file")
@@ -107,7 +111,7 @@ func TestSupportAbort(t *testing.T) {
 	timec := time.After(interval)
 	errc := make(chan error)
 	go func() {
-		_, err := downloader.Download(ctx, url, sigurl)
+		_, err := downloader.Download(ctx, Request{URL: url, SigURL: sigurl})
 		errc <- err
 	}()
 loop:
@@ -130,7 +134,7 @@ func TestSignedWithDifferentKey(t *testing.T) {
 	sigurl := url + ".asc"
 
 	downloader := newDownloader(testKey, t)
-	c, err := downloader.Download(context.Background(), url, sigurl)
+	c, err := downloader.Download(context.Background(), Request{URL: url, SigURL: sigurl})
 	if err == nil || !strings.Contains(err.Error(), "file and signature mismatch") {
 		t.Errorf("Expected signature mismatch failure: %v", err)
 	}

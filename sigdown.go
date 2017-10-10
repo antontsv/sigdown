@@ -21,9 +21,12 @@ type SignedContent struct {
 	Signers []string
 }
 
-// Downloader can perform an HTTP download with PGP signature verification
-type Downloader struct {
-	keyring openpgp.EntityList
+// Request has all necessary data to perform HTTP download PGP verification detached signature
+type Request struct {
+	// URL to download content from
+	URL string
+	// SigURL should serve detached PGP signature for the content served by URL
+	SigURL string
 	// MaxBytes spefifies max number of bytes content or signature file
 	// can be downloaded from remote site.
 	// We do not want remote service or Man-In-The-Middle try to overload
@@ -37,6 +40,16 @@ type Downloader struct {
 	// and running all checks.
 	// Default is 30 seconds
 	Timeout time.Duration
+}
+
+// Downloader can perform an HTTP download with PGP signature verification
+type Downloader interface {
+	Download(ctx context.Context, req Request) (*SignedContent, error)
+}
+
+// downloader can perform an HTTP download with PGP signature verification
+type downloader struct {
+	keyring openpgp.EntityList
 }
 
 type download struct {
@@ -57,21 +70,31 @@ const (
 )
 
 // New returns new downloader set to verify downloads provided PGP key
-func New(pgpPubKey string) (*Downloader, error) {
-	d := new(Downloader)
+func New(pgpPubKey string) (Downloader, error) {
+	d := new(downloader)
 	keyring, err := openpgp.ReadArmoredKeyRing(strings.NewReader(pgpPubKey))
 	if err != nil {
 		return nil, fmt.Errorf("bad PGP key: %v", err)
 	}
 	d.keyring = keyring
-	d.MaxBytes = 1048576 // 1 MB
-	d.Timeout = 30 * time.Second
 	return d, nil
 }
 
 // Download fetches data and PGP signature over HTTP and returns data if signed correctly
-func (d *Downloader) Download(ctx context.Context, url string, sigurl string) (*SignedContent, error) {
-	cancelCtx, cancel := context.WithTimeout(ctx, d.Timeout)
+func (d *downloader) Download(ctx context.Context, req Request) (*SignedContent, error) {
+
+	url := req.URL
+	sigurl := req.SigURL
+	timeout := 30 * time.Second
+	maxbytes := req.MaxBytes
+	if maxbytes <= 0 {
+		maxbytes = 1048576
+	}
+	if req.Timeout != 0 {
+		timeout = req.Timeout
+	}
+
+	cancelCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	results := make(chan result, 5)
@@ -110,7 +133,7 @@ func (d *Downloader) Download(ctx context.Context, url string, sigurl string) (*
 		case dl := <-downloadc:
 			downloads[dl.resType] = dl.resp.Body
 			if len(downloads) == 2 {
-				go d.readContent(cancelCtx, downloads, results)
+				go d.readContent(cancelCtx, downloads, results, maxbytes)
 			}
 		case result := <-results:
 			return result.content, result.err
@@ -134,12 +157,11 @@ func (cr *contextReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-func (d *Downloader) readContent(ctx context.Context, downloads map[string]io.ReadCloser, results chan result) {
+func (d *downloader) readContent(ctx context.Context, downloads map[string]io.ReadCloser, results chan result, maxbytes int) {
 
 	defer downloads[resContent].Close()
 	defer downloads[resSig].Close()
 
-	maxbytes := d.MaxBytes
 	pr, pw := io.Pipe()
 	names := make([]string, 0, 1)
 
