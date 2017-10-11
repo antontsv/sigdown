@@ -16,7 +16,7 @@ import (
 // SignedContent returns signed context and names of signers
 type SignedContent struct {
 	// Content that has been confirmed by its detashed signature
-	Content string
+	Content []byte
 	// Signers represents a list of names of people who signed Content.
 	Signers []string
 }
@@ -171,7 +171,7 @@ func (d *downloader) readContent(ctx context.Context, downloads map[string]io.Re
 			results <- result{err: fmt.Errorf("unable to read signed content: %v", err)}
 			return
 		}
-		results <- result{content: &SignedContent{Content: string(b), Signers: names}}
+		results <- result{content: &SignedContent{Content: b, Signers: names}}
 	}()
 
 	cr := &contextReader{
